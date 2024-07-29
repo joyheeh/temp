@@ -1,18 +1,10 @@
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
+import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 import io
 import base64
+import os
 
-app = FastAPI()
-
-# 정적 파일 및 템플릿 설정
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-def create_gradient_with_overlay_and_text(size, start_color, end_color, overlay_opacity, text, font_size, line_spacing=1.2):
+def create_gradient_with_overlay_and_text(size, start_color, end_color, overlay_opacity, text, font_size, line_spacing=1.2, margin_percent=5):
     # 그라데이션 및 오버레이 생성
     gradient = Image.new('RGB', size)
     draw = ImageDraw.Draw(gradient)
@@ -29,10 +21,15 @@ def create_gradient_with_overlay_and_text(size, start_color, end_color, overlay_
 
     # 텍스트 추가
     draw = ImageDraw.Draw(result)
-    font = ImageFont.truetype("/GmarketSansBold.otf", font_size)
+    try:
+        font_path = os.path.join(os.path.dirname(__file__), "GmarketSansBold.otf")
+        font = ImageFont.truetype(font_path, font_size)
+    except Exception:
+        st.warning("Custom font not found. Using default font.")
+        font = ImageFont.load_default()
     
-    # 텍스트 영역 계산 (좌우 5% 여백)
-    margin = int(size[0] * 0.05)
+    # 텍스트 영역 계산 (사용자 지정 여백)
+    margin = int(size[0] * (margin_percent / 100))
     text_width = size[0] - 2 * margin
     
     # 단어 단위 줄바꿈 함수
@@ -73,58 +70,46 @@ def create_gradient_with_overlay_and_text(size, start_color, end_color, overlay_
         draw.text((x, y), line, font=font, fill=(255, 255, 255))
     
     return result
-    
 
-@app.get("/", response_class=HTMLResponse)
-async def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+# Streamlit app
+st.title("Gradient Image Generator")
 
-@app.post("/generate")
-async def generate_image(
-    text: str = Form(...),
-    start_color: str = Form(...),
-    end_color: str = Form(...),
-    width: int = Form(...),
-    height: int = Form(...)
-):
-    # 색상 문자열을 RGB 튜플로 변환
-    start_rgb = tuple(int(start_color[i:i+2], 16) for i in (1, 3, 5))
-    end_rgb = tuple(int(end_color[i:i+2], 16) for i in (1, 3, 5))
+# Input fields
+text = st.text_area("Enter text for the image")
+start_color = st.color_picker("Select start color", "#000000")
+end_color = st.color_picker("Select end color", "#FFFFFF")
+width = st.number_input("Image width", min_value=100, max_value=2000, value=800)
+height = st.number_input("Image height", min_value=100, max_value=2000, value=400)
+font_size = st.number_input("Font size", min_value=10, max_value=100, value=30)
+margin_percent = st.number_input("Margin percentage", min_value=0, max_value=50, value=5)
 
-    # 이미지 생성
+if st.button("Generate Image"):
+    # Convert color strings to RGB tuples
+    start_rgb = tuple(int(start_color[1:][i:i+2], 16) for i in (0, 2, 4))
+    end_rgb = tuple(int(end_color[1:][i:i+2], 16) for i in (0, 2, 4))
+
+    # Generate image
     image = create_gradient_with_overlay_and_text(
-        (width, height), start_rgb, end_rgb, 0.2, text, 30, 1.5
+        (width, height), start_rgb, end_rgb, 0.2, text, font_size, 1.5, margin_percent
     )
 
-    # 이미지를 바이트 스트림으로 변환
+    # Display the image
+    st.image(image, caption="Generated Gradient Image", use_column_width=True)
+
+    # Convert image to base64 for preview
     img_byte_arr = io.BytesIO()
     image.save(img_byte_arr, format='PNG')
     img_byte_arr.seek(0)
-
-    # 이미지를 base64 인코딩
     img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode()
 
-    return {"image": img_base64}
-
-@app.get("/download")
-async def download_image(
-    text: str,
-    start_color: str,
-    end_color: str,
-    width: int,
-    height: int
-):
-    # 색상 문자열을 RGB 튜플로 변환
-    start_rgb = tuple(int(start_color[i:i+2], 16) for i in (1, 3, 5))
-    end_rgb = tuple(int(end_color[i:i+2], 16) for i in (1, 3, 5))
-
-    # 이미지 생성
-    image = create_gradient_with_overlay_and_text(
-        (width, height), start_rgb, end_rgb, 0.2, text, 30, 1.5
+    # Create download buttons
+    st.download_button(
+        label="Download Image",
+        data=img_byte_arr,
+        file_name="gradient_image.png",
+        mime="image/png"
     )
-    # 이미지를 바이트 스트림으로 변환
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format='PNG')
-    img_byte_arr.seek(0)
 
-    return FileResponse(img_byte_arr, media_type="image/png", filename="gradient_image.png")
+    # Display base64 encoded image
+    st.markdown(f"Base64 encoded image:")
+    st.code(img_base64)
